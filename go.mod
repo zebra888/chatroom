@@ -1,4 +1,4 @@
-module github.com/zebra888/chatserver
+module github.com/zebra888/chatroom
 
 go 1.15
 

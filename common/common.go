@@ -3,6 +3,7 @@ package common
 import (
 	"errors"
 	"fmt"
+	"sync"
 )
 
 var ErrorLoggedOut = errors.New("User has already logged out")
@@ -12,6 +13,7 @@ var ErrorNotLoggedIn = errors.New("Chatter does not exist or not logged in")
 type ChatRoom struct {
 	chatterDB map[string]bool
 	msgChan   map[string]chan string
+	mu        sync.RWMutex
 }
 
 type Chat struct {
@@ -24,8 +26,10 @@ type Chat struct {
 
 // login to chat room. only provide name for now. will add password later
 func (c *ChatRoom) Login(name string, reply *string) error {
-	chatterLoggedIn, ok := c.chatterDB[name]
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	chatterLoggedIn, ok := c.chatterDB[name]
 	if ok {
 		if chatterLoggedIn {
 			return ErrorAlreadyLoggedIn
@@ -41,6 +45,9 @@ func (c *ChatRoom) Login(name string, reply *string) error {
 }
 
 func (c *ChatRoom) Logout(name string, reply *string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	chatterLoggedIn, ok := c.chatterDB[name]
 	if !ok || chatterLoggedIn == false {
 		return ErrorNotLoggedIn
@@ -55,10 +62,12 @@ func (c *ChatRoom) Logout(name string, reply *string) error {
 func (c *ChatRoom) Post(chat Chat, reply *string) error {
 	// since login is already checked, no need to check existence here
 	// broadcast message to everyone in room except sender itself
-	fmt.Println("In Post")
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	for chatter, ch := range c.msgChan {
 		if chatter != chat.Name && c.chatterDB[chatter] == true {
-			// need a go rountine?
+			// client should already be listening in go routine so this should not block
 			ch <- fmt.Sprintf("%s: %s", chat.Name, chat.Message)
 			fmt.Printf("posted message %s to %s\n", chat.Message, chatter)
 		}
@@ -68,11 +77,11 @@ func (c *ChatRoom) Post(chat Chat, reply *string) error {
 }
 
 func (c *ChatRoom) Listen(name string, reply *string) error {
-	fmt.Println(name, "is listening")
+	c.mu.RLock()
 	ch, _ := c.msgChan[name]
-	//for s := range ch {
-	//	*reply = s
-	//}
+	c.mu.RUnlock()
+
+	// each call of Listen retrives one message from channel, because rpc doesn't support streaming
 	msg, ok := <-ch
 	if !ok {
 		return ErrorLoggedOut
