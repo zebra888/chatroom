@@ -22,7 +22,6 @@ Listen runs on the background once a chatter logs in. It retrive messages posted
 Generally easy to use.   
 Does not support streaming (at least afaik).  
 
-**Todo**   
+**TUI**   
 
-Adding a command line UI would be cool, probably using TUI.
-Try out g-rpc.
+Used "github.com/marcusolsson/tui-go" package

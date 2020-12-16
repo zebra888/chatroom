@@ -1,37 +1,45 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"log"
 	"net/rpc"
 	"os"
-	"sync"
+	"time"
 
-	"github.com/zebra888/chatserver/common"
+	"github.com/marcusolsson/tui-go"
+	"github.com/zebra888/chatroom/common"
 )
 
-func chat(client *rpc.Client, name string) {
-	reader := bufio.NewReader(os.Stdin)
-	var reply string
-	for {
-		msg, _ := reader.ReadString('\n')
+const DEBUG = false
 
-		// empty string will stop chatting and logout
-		if msg == "\n" {
-			if err := client.Call("ChatRoom.Logout", name, &reply); err != nil {
-				fmt.Println("Error occured in Logout")
+func listen(history *tui.Box, ui tui.UI, client *rpc.Client, name string) {
+	var chat common.Chat
+	go func() {
+		for {
+			if err := client.Call("ChatRoom.Listen", name, &chat); err != nil {
+				// not sure why direct comparison doesn't work. maybe the RPC call errors were manipulated by the package somehow
+				if err.Error() == common.ErrorLoggedOut.Error() || err == rpc.ErrShutdown {
+					return
+				} else {
+					fmt.Printf("Error occured in Listen: %v\n", err)
+				}
 			} else {
-				fmt.Println(reply)
-				return
+				history.Append(tui.NewHBox(
+					tui.NewLabel(chat.SendTime),
+					tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", chat.Name))),
+					tui.NewLabel(chat.Message),
+					tui.NewSpacer(),
+				))
+				ui.Repaint()
+
 			}
 		}
-		if err := client.Call("ChatRoom.Post", common.Chat{Name: name, Message: msg}, nil); err != nil {
-			fmt.Println("Error occured in Post")
-		}
-	}
+	}()
 }
 
 func main() {
+
 	// get rpc client by dailing
 	client, _ := rpc.DialHTTP("tcp", "127.0.0.1:9000")
 
@@ -41,36 +49,76 @@ func main() {
 		chatterName = argsWithoutProg[0]
 	}
 
-	var reply string
+	if DEBUG {
+		f, _ := os.Create(fmt.Sprintf("debug_%s.log", chatterName))
+		defer f.Close()
+		logger := log.New(f, "", log.LstdFlags)
+		tui.SetLogger(logger)
+	}
 
 	// chatter login
+	var reply string
 	if err := client.Call("ChatRoom.Login", chatterName, &reply); err != nil {
 		fmt.Println("Error occured when logging in")
 	} else {
 		fmt.Printf(reply)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			if err := client.Call("ChatRoom.Listen", chatterName, &reply); err != nil {
-				// not sure why direct comparison doesn't work. maybe the RPC call errors were manipulated by the package somehow
-				if err.Error() == common.ErrorLoggedOut.Error() {
-					return
-				} else {
-					fmt.Printf("Error occured in Listen: %v\n", err)
-				}
-			} else {
-				fmt.Println(reply)
-			}
+	// start TUI
+	history := tui.NewVBox()
+
+	historyScroll := tui.NewScrollArea(history)
+	historyScroll.SetAutoscrollToBottom(true)
+
+	historyBox := tui.NewVBox(historyScroll)
+	historyBox.SetBorder(true)
+
+	input := tui.NewEntry()
+	input.SetFocused(true)
+	input.SetSizePolicy(tui.Expanding, tui.Maximum)
+
+	inputBox := tui.NewHBox(input)
+	inputBox.SetBorder(true)
+	inputBox.SetSizePolicy(tui.Expanding, tui.Maximum)
+
+	chat := tui.NewVBox(historyBox, inputBox)
+	chat.SetSizePolicy(tui.Expanding, tui.Expanding)
+
+	input.OnSubmit(func(e *tui.Entry) {
+		sendTime := time.Now().Format("15:04")
+		if err := client.Call("ChatRoom.Post", common.Chat{Name: chatterName, Message: e.Text(), SendTime: sendTime}, nil); err != nil {
+			fmt.Println("Error occured in Post")
 		}
-	}()
+		//fmt.Printf("input history %v\n", history)
+		history.Append(tui.NewHBox(
+			tui.NewLabel(sendTime),
+			tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", chatterName))),
+			tui.NewLabel(e.Text()),
+			tui.NewSpacer(),
+		))
+		input.SetText("")
+	})
 
-	// start chatting
-	chat(client, chatterName)
+	ui, err := tui.New(chat)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// start listening to get other's message
+	listen(history, ui, client, chatterName)
+	ui.SetKeybinding("Esc", func() {
+		if err := client.Call("ChatRoom.Logout", chatterName, &reply); err != nil {
+			fmt.Println("Error occured in Logout")
+		} else {
+			inputBox.Append(tui.NewHBox(
+				tui.NewLabel(reply),
+			))
+		}
+		ui.Quit()
+	})
 
-	// wait until chatter logout
-	wg.Wait()
+	// config TUI
+	// onsubmit:
+	// call post (wrap up a function),
+	// while listening, append to history box
+	ui.Run()
 }

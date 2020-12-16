@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/rpc"
 
-	"github.com/zebra888/chatserver/common"
+	"github.com/zebra888/chatroom/common"
 )
 
 func main() {

@@ -12,12 +12,14 @@ var ErrorNotLoggedIn = errors.New("Chatter does not exist or not logged in")
 
 type ChatRoom struct {
 	chatterDB map[string]bool
-	msgChan   map[string]chan string
+	msgChan   map[string]chan Chat
 	mu        sync.RWMutex
 }
 
 type Chat struct {
-	Name, Message string
+	Name     string
+	Message  string
+	SendTime string
 }
 
 /*func (c *ChatRoom) Register(name string, pwd string) error {
@@ -37,7 +39,7 @@ func (c *ChatRoom) Login(name string, reply *string) error {
 	}
 
 	// new chatter or existing chatter login: init channel and set login status
-	c.msgChan[name] = make(chan string)
+	c.msgChan[name] = make(chan Chat)
 	c.chatterDB[name] = true
 	*reply = fmt.Sprintf("Welcome %s\n", name)
 
@@ -68,15 +70,15 @@ func (c *ChatRoom) Post(chat Chat, reply *string) error {
 	for chatter, ch := range c.msgChan {
 		if chatter != chat.Name && c.chatterDB[chatter] == true {
 			// client should already be listening in go routine so this should not block
-			ch <- fmt.Sprintf("%s: %s", chat.Name, chat.Message)
+			ch <- chat
 			fmt.Printf("posted message %s to %s\n", chat.Message, chatter)
 		}
 	}
-	*reply = "Posted"
 	return nil
 }
 
-func (c *ChatRoom) Listen(name string, reply *string) error {
+func (c *ChatRoom) Listen(name string, reply *Chat) error {
+	fmt.Println(name, "is listening...")
 	c.mu.RLock()
 	ch, _ := c.msgChan[name]
 	c.mu.RUnlock()
@@ -86,6 +88,7 @@ func (c *ChatRoom) Listen(name string, reply *string) error {
 	if !ok {
 		return ErrorLoggedOut
 	}
+	fmt.Printf("%s got message: %s\n", name, msg.Message)
 	*reply = msg
 	return nil
 }
@@ -93,6 +96,6 @@ func (c *ChatRoom) Listen(name string, reply *string) error {
 func NewChatRoom() *ChatRoom {
 	return &ChatRoom{
 		chatterDB: make(map[string]bool),
-		msgChan:   make(map[string]chan string),
+		msgChan:   make(map[string]chan Chat),
 	}
 }
